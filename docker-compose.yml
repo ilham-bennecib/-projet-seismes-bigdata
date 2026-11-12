@@ -11,7 +11,7 @@
 #   UI Spark master       http://localhost:8080
 #   UI de l'appli en cours http://localhost:4040   (quand une SparkSession est ouverte dans un notebook)
 #   History Server        http://localhost:18080
-#   Dashboard Streamlit   http://localhost:8501   (plus tard)
+#   Dashboard Streamlit   http://localhost:8501
 
 # Les 5 services Spark utilisent la meme image. Seul spark-master la construit
 # (si plusieurs services la construisent en meme temps, Docker Compose echoue).
@@ -104,13 +104,25 @@ services:
     ports:
       - "8888:8888"
       - "4040:4040"                         # UI de l'application Spark du notebook
-      - "8501:8501"                         # dashboard Streamlit (plus tard)
     volumes:
       - ./conf:/opt/spark/conf:ro
       - ./notebooks:/work/notebooks
       - ./data/landing:/work/data/landing   # le notebook d'ingestion ecrit ici
       - ./data/serving:/work/data/serving
       - ./data/spark-events:/work/data/spark-events
+
+  # ---------- Dashboard : Streamlit ----------
+  # Lit seulement la couche de service (Parquet dans data/serving), pas HDFS, pas Spark.
+  dashboard:
+    <<: *spark
+    hostname: dashboard
+    working_dir: /work/dashboard              # Streamlit y lit son theme (.streamlit/config.toml)
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dashboard:/work/dashboard:ro
+      - ./data/serving:/work/data/serving:ro
 
 volumes:
   namenode:
