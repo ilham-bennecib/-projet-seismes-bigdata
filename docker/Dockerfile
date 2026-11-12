@@ -14,16 +14,18 @@ ADD --chmod=644 https://repo1.maven.org/maven2/io/delta/delta-storage/3.2.0/delt
 # jupyterlab : les notebooks (le driver Spark tourne dans le conteneur jupyter)
 # plotly + streamlit : graphiques et dashboard
 # delta-spark : l'API Python DeltaTable (MERGE, historique). --no-deps car pyspark est deja dans l'image.
+# matplotlib : graphiques dans les notebooks (enregistrés comme images, visibles sur GitHub)
 RUN pip3 install --no-cache-dir pandas==2.0.3 pyarrow==14.0.2 jupyterlab==4.2.5 \
-        plotly==5.24.1 streamlit==1.39.0 \
+        plotly==5.24.1 streamlit==1.39.0 matplotlib==3.7.5 "packaging<25" \
  && pip3 install --no-cache-dir --no-deps delta-spark==3.2.0 \
  && mkdir -p /home/spark && chown -R spark:spark /home/spark
 
 ENV PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip \
-    HOME=/home/spark PYSPARK_PYTHON=python3 PYSPARK_DRIVER_PYTHON=python3
+    HOME=/home/spark PYSPARK_PYTHON=python3 PYSPARK_DRIVER_PYTHON=python3 MPLCONFIGDIR=/tmp/matplotlib
 
 # verification a la construction : la construction echoue si un import ne marche pas
-RUN python3 -c "import pyspark, delta, pandas, pyarrow, plotly, streamlit; print('pyspark', pyspark.__version__)"
+RUN python3 -c "import pyspark, delta, pandas, pyarrow, plotly, streamlit, matplotlib; print('pyspark', pyspark.__version__)" \
+ && rm -rf /tmp/matplotlib
 
 USER spark
 WORKDIR /work

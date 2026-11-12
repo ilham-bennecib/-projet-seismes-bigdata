@@ -168,10 +168,17 @@ def charger():
     carte["lieu_court"] = carte["lieu"].apply(lieu_court)
     carte["region"] = carte["lieu"].apply(region)
     carte["energie"] = energie(carte["magnitude"])
-    return mensuel, magnitudes, profondeur, carte, qualite
+    # résultats du KMeans (notebook 07) : la zone de chaque séisme + le résumé des zones
+    # s'ils n'existent pas encore, l'onglet "Zones (IA)" le dit au lieu de planter
+    zones = None
+    if (DOSSIER / "gold_zones.parquet").exists() and (DOSSIER / "gold_carte_zones.parquet").exists():
+        zones = pd.read_parquet(DOSSIER / "gold_zones.parquet")
+        zones["nom"] = zones["region_principale"] + " (" + zones["zone"].astype(str) + ")"
+        carte = carte.merge(pd.read_parquet(DOSSIER / "gold_carte_zones.parquet"), on="id", how="left")
+    return mensuel, magnitudes, profondeur, carte, qualite, zones
 
 
-mensuel, magnitudes, profondeur, carte, qualite = charger()
+mensuel, magnitudes, profondeur, carte, qualite, zones = charger()
 annee_min, annee_max = int(mensuel["annee"].min()), int(mensuel["annee"].max())
 nb_analyses = int(qualite.loc[qualite["etape"] == "gardees", "nb_lignes"].sum())
 
@@ -259,7 +266,8 @@ st.write("")
 
 
 # ---------- 6. Onglets ----------
-onglets = st.tabs(["Vue d'ensemble", "Géographie", "Magnitudes", "Profondeur", "Séismes majeurs", "Qualité des données"])
+onglets = st.tabs(["Vue d'ensemble", "Géographie", "Magnitudes", "Profondeur", "Séismes majeurs",
+                   "Qualité des données", "Zones (IA)"])
 
 
 # ===== Onglet 1 : vue d'ensemble =====
@@ -571,6 +579,86 @@ with onglets[5]:
             tableau["nb_lignes"] = tableau["nb_lignes"].apply(nombre)   # 1604291 -> "1 604 291"
             st.dataframe(tableau.rename(columns={"etape": "Étape", "motif": "Motif", "nb_lignes": "Lignes"}),
                 use_container_width=True, hide_index=True, height=260)
+
+
+# ===== Onglet 7 : les zones trouvées par l'IA (KMeans) =====
+# mêmes couleurs que dans le notebook 07 (palette "tab10" de matplotlib), une par zone
+COULEURS_ZONES = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+
+with onglets[6]:
+    if zones is None:
+        st.info("Les zones n'existent pas encore : lance d'abord le notebook 07_kmeans.")
+    else:
+        plus_grande = zones.sort_values("nb_seismes", ascending=False).iloc[0]
+        plus_profonde = zones.sort_values("pct_profonds", ascending=False).iloc[0]
+        z1, z2, z3 = st.columns(3)
+        kpi(z1, "Zones trouvées par le KMeans", str(len(zones)),
+            "regroupement automatique (Spark MLlib), sans aucune connaissance des plaques")
+        kpi(z2, "Zone la plus active", plus_grande["region_principale"],
+            f"{nombre(plus_grande['nb_seismes'])} séismes, "
+            f"{plus_grande['nb_seismes'] * 100 / zones['nb_seismes'].sum():.0f} % du total", ORANGE)
+        kpi(z3, "Zone la plus profonde", plus_profonde["region_principale"],
+            f"{plus_profonde['pct_profonds']:.1f} % de séismes à plus de 300 km", AQUA)
+        st.write("")
+
+        with st.container(border=True):
+            titre_carte("Les zones sismiques trouvées par l'IA",
+                        f"{nombre(len(carte_mag))} séismes de magnitude ≥ {mag_min:.1f} entre {annees[0]} et {annees[1]}, "
+                        "coloriés selon leur zone. Le KMeans a seulement regroupé les séismes proches les uns des autres, "
+                        "et il retrouve pourtant les grandes régions sismiques. Les croix sont les centres des zones.")
+            fig = go.Figure()
+            for _, z in zones.sort_values("zone").iterrows():
+                df = carte_mag[carte_mag["zone"] == z["zone"]].sort_values("magnitude")
+                fig.add_trace(go.Scattergeo(
+                    lat=df["latitude"], lon=df["longitude"], name=z["nom"], mode="markers",
+                    marker=dict(size=3 + (df["magnitude"] - MC) * 3, color=COULEURS_ZONES[int(z["zone"])],
+                                opacity=0.8, line=dict(width=0.4, color="white")),
+                    customdata=df[["lieu_court", "magnitude", "profondeur"]].values,
+                    hovertemplate="<b>%{customdata[0]}</b><br>Zone : " + z["nom"] +
+                                  "<br>Magnitude %{customdata[1]:.1f}<br>Profondeur %{customdata[2]:.0f} km<extra></extra>"))
+            fig.add_trace(go.Scattergeo(
+                lat=zones["centre_latitude"], lon=zones["centre_longitude"], name="Centre de zone", mode="markers",
+                marker=dict(symbol="x", size=11, color=TEXTE, line=dict(width=1.5, color="white")),
+                text=zones["nom"], hovertemplate="<b>Centre de la zone %{text}</b><extra></extra>"))
+            fig.update_geos(projection_type="natural earth", showframe=False, bgcolor="white",
+                            showocean=True, oceancolor="#eef3f8", showland=True, landcolor="#f7f6f2",
+                            showcountries=True, countrycolor="#dcd9d1", countrywidth=0.5,
+                            showcoastlines=True, coastlinecolor="#c9c6bd", coastlinewidth=0.6, showlakes=False)
+            fig.update_layout(height=640, margin=dict(l=0, r=0, t=60, b=0),
+                              legend=dict(y=1.12, itemsizing="constant"))
+            afficher(fig)
+
+        g, d = st.columns([3, 2])
+        with g:
+            with st.container(border=True):
+                titre_carte("Fiche de chaque zone", "Calculée sur toute la période 2016-2025 (séismes de magnitude ≥ 4.5).")
+                fiche = zones.sort_values("nb_seismes", ascending=False)[
+                    ["nom", "nb_seismes", "mag_moyenne", "mag_max", "profondeur_moyenne", "pct_profonds"]]
+                st.dataframe(fiche, use_container_width=True, hide_index=True, height=400, column_config={
+                    "nom": "Zone",
+                    "nb_seismes": st.column_config.NumberColumn("Séismes", format="%d"),
+                    "mag_moyenne": st.column_config.NumberColumn("Mag. moy.", format="%.2f"),
+                    "mag_max": st.column_config.NumberColumn("Mag. max", format="%.1f"),
+                    "profondeur_moyenne": st.column_config.NumberColumn("Prof. moy. (km)", format="%.0f"),
+                    "pct_profonds": st.column_config.ProgressColumn("Profonds", format="%.1f %%",
+                                                                    min_value=0, max_value=20),
+                })
+        with d:
+            with st.container(border=True):
+                titre_carte("Où sont les séismes profonds ?",
+                            "Part des séismes à plus de 300 km dans chaque zone : ils sont presque tous dans la zone Tonga, "
+                            "là où la plaque plonge le plus profondément (subduction).")
+                tri = zones.sort_values("pct_profonds")
+                fig = go.Figure(go.Bar(
+                    x=tri["pct_profonds"], y=tri["nom"], orientation="h",
+                    marker=dict(color=[COULEURS_ZONES[int(z)] for z in tri["zone"]], cornerradius=4),
+                    text=[f"{v:.1f} %" for v in tri["pct_profonds"]], textposition="outside", cliponaxis=False,
+                    textfont=dict(size=11, color=MUET),
+                    hovertemplate="<b>%{y}</b><br>%{x:.1f} % de séismes profonds<extra></extra>"))
+                fig.update_layout(height=400, bargap=0.3, margin=dict(l=10, r=50, t=10, b=10),
+                                  xaxis=dict(showgrid=False, showticklabels=False), yaxis=dict(showgrid=False))
+                afficher(fig)
 
 st.markdown(f'<p class="note" style="margin-top:1.5rem">Source : USGS Earthquake Catalog (ComCat). '
             f'Chaîne de traitement : HDFS + Delta Lake (bronze, silver, gold) + Spark. '
