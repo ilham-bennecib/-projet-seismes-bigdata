@@ -1,0 +1,21 @@
+# donnees (se regenerent avec le script d'ingestion et les jobs)
+data/landing/
+data/lakehouse/
+data/serving/*
+!data/serving/.gitkeep
+data/spark-events/*
+!data/spark-events/.gitkeep
+
+# document du formateur (ne pas publier)
+Big Data (1).pdf
+
+# documents personnels (gardes en local uniquement)
+docs/
+synthese_projet_seismes.md
+synthese_projet_seismes.pdf
+
+# fichiers temporaires
+*.part
+*.log
+__pycache__/
+.ipynb_checkpoints/

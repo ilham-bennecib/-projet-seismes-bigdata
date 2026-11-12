@@ -1,0 +1,3 @@
+# Fins de ligne Linux (LF) pour tous les fichiers texte :
+# ils sont lus dans des conteneurs Linux (hadoop.env, spark-defaults.conf, scripts bash).
+* text=auto eol=lf

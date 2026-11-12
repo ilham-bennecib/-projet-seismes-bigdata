@@ -1,0 +1,118 @@
+# Projet seismes (version notebooks) :
+# HDFS (1 NameNode, 2 DataNodes) + Spark (1 master, 2 workers, History Server) + Jupyter
+#
+#   docker compose build             1re fois : construire l'image Spark + Delta + Jupyter
+#   docker compose up -d             demarrer
+#   docker compose ps                voir l'etat des conteneurs
+#   docker compose down              tout arreter (les donnees HDFS sont gardees)
+#
+#   Jupyter (notebooks)   http://localhost:8888
+#   UI HDFS (NameNode)    http://localhost:9870
+#   UI Spark master       http://localhost:8080
+#   UI de l'appli en cours http://localhost:4040   (quand une SparkSession est ouverte dans un notebook)
+#   History Server        http://localhost:18080
+#   Dashboard Streamlit   http://localhost:8501   (plus tard)
+
+# Les 5 services Spark utilisent la meme image. Seul spark-master la construit
+# (si plusieurs services la construisent en meme temps, Docker Compose echoue).
+x-spark: &spark
+  image: projet-seismes-nb/spark:3.5.7-delta-jupyter
+  pull_policy: never                        # image locale, jamais telechargee
+
+services:
+
+  # ---------- HDFS : stockage ----------
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    hostname: namenode
+    environment:
+      CLUSTER_NAME: seismes
+    env_file: hadoop.env
+    ports:
+      - "9870:9870"
+    volumes:
+      - namenode:/hadoop/dfs/name
+      - ./data/landing:/landing:ro          # CSV telecharges (pour verifier avec hdfs dfs si besoin)
+
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    hostname: datanode1
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file: hadoop.env
+    volumes:
+      - datanode1:/hadoop/dfs/data
+
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    hostname: datanode2
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file: hadoop.env
+    volumes:
+      - datanode2:/hadoop/dfs/data
+
+  # ---------- Spark : calcul ----------
+  spark-master:
+    <<: *spark
+    build: ./docker                         # construit l'image commune
+    hostname: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./conf:/opt/spark/conf:ro
+
+  spark-worker-1:
+    <<: *spark
+    hostname: spark-worker-1
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+             spark://spark-master:7077 --cores 2 --memory 2g
+    depends_on: [spark-master]
+    volumes:
+      - ./conf:/opt/spark/conf:ro
+
+  spark-worker-2:
+    <<: *spark
+    hostname: spark-worker-2
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+             spark://spark-master:7077 --cores 2 --memory 2g
+    depends_on: [spark-master]
+    volumes:
+      - ./conf:/opt/spark/conf:ro
+
+  spark-history:
+    <<: *spark
+    hostname: spark-history
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./conf:/opt/spark/conf:ro
+      - ./data/spark-events:/work/data/spark-events:ro
+
+  # ---------- Jupyter : les notebooks ----------
+  # Le driver Spark tourne ICI (et plus dans spark-master) : c'est lui qui telecharge
+  # les CSV, les depose dans HDFS, et ecrit la couche de service en Parquet.
+  # hostname "jupyter" : les workers renvoient leurs resultats au driver par ce nom.
+  jupyter:
+    <<: *spark
+    hostname: jupyter
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+             --ServerApp.token= --ServerApp.password= --ServerApp.root_dir=/work
+    depends_on: [spark-master, namenode]
+    ports:
+      - "8888:8888"
+      - "4040:4040"                         # UI de l'application Spark du notebook
+      - "8501:8501"                         # dashboard Streamlit (plus tard)
+    volumes:
+      - ./conf:/opt/spark/conf:ro
+      - ./notebooks:/work/notebooks
+      - ./data/landing:/work/data/landing   # le notebook d'ingestion ecrit ici
+      - ./data/serving:/work/data/serving
+      - ./data/spark-events:/work/data/spark-events
+
+volumes:
+  namenode:
+  datanode1:
+  datanode2:
